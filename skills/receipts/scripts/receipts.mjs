@@ -338,7 +338,7 @@ export function render(b, id) {
 
 // The shortest way to run verify from the top of the repo.
 function verifyCommand(ws, id) {
-  const real = fileURLToPath(import.meta.url);
+  const real = realpath(fileURLToPath(import.meta.url));
   const home = os.homedir();
   const inRepo = path.relative(ws.root, real);
   let script = real;
@@ -521,11 +521,13 @@ function workspace() {
 }
 
 function realpath(p) {
-  try {
-    return fs.realpathSync(p);
-  } catch {
-    return path.resolve(p);
+  // native also expands Windows short names like RUNNER~1, which git never prints.
+  for (const resolve of [fs.realpathSync.native, fs.realpathSync]) {
+    try {
+      return resolve(p);
+    } catch {}
   }
+  return path.resolve(p);
 }
 
 function readLog(ws) {
