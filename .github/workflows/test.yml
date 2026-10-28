@@ -9,7 +9,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # macOS is tested on a Mac before each push. GitHub's macOS runners often run out of capacity.
+        os: [ubuntu-latest, windows-latest]
         node: [18, 24]
     runs-on: ${{ matrix.os }}
     steps:

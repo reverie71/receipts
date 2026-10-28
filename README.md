@@ -4,27 +4,34 @@
 
 Coding agents say "all tests pass" when they never ran them, ran half of them, or ran them before their last edit. receipts is an agent skill that makes the agent run its checks through a small script. The script records what really ran, and the agent ends its reply with a receipt it can't write by hand.
 
-A real receipt from Claude Code, after it added an option to a slug function:
+A real receipt. Claude Code got a real bug report for [chi](https://github.com/go-chi/chi), a popular Go router, on chi's code from just before the real fix. Nobody told it about receipts. It found the skill, wrote a failing test, fixed the bug and ended its reply with this:
 
 ```
 ================================================
                     RECEIPT
 ================================================
-task     Add maxLength option to slugify
-repo     e2e-slug2 (main)
-when     2026-10-28 09:56 to 09:56 (under 1 min)
-changes  2 files, +45 -3 since 2f6e362
-tests    test/slug.test.mjs (edited)
+task     Fix double-counted BytesWritten with
+         Tee + io.Copy
+repo     chi (master)
+when     2026-10-28 11:16 to 11:18 (1 min)
+changes  2 files, +21 -3 since a54874f
+tests    middleware/wrap_writer_test.go (edited)
 ------------------------------------------------
-PASS  npm test                              0.2s
-      10 passed, 0 failed
-PASS  npm run lint                          0.1s
+PASS  go build ./...                        0.2s
+PASS  go vet ./...                          1.1s
+PASS  make test                            47.7s
+      2 packages ok, 0 failed
+------------------------------------------------
+NOT CHECKED
+  - Windows and Go 1.23-1.26 CI matrix: only ran
+    locally on macOS with the installed Go
+    toolchain
 ------------------------------------------------
 RESULT   ALL PASSED
-         2 of 2 checks passed on this code
-receipt  fbbd5537270d
+         3 of 3 checks passed on this code
+receipt  59041894a301
 ================================================
-Check it: node .claude/skills/receipts/scripts/receipts.mjs verify fbbd5537270d
+Check it: node .claude/skills/receipts/scripts/receipts.mjs verify 59041894a301
 ```
 
 ## Install
@@ -58,7 +65,7 @@ The record lives in `.receipts/` at the top of your repo. Git ignores it, and no
 Every receipt ends with a line like this one. Run it from the top of the repo:
 
 ```
-node .claude/skills/receipts/scripts/receipts.mjs verify fbbd5537270d
+node .claude/skills/receipts/scripts/receipts.mjs verify 59041894a301
 ```
 
 `verify` confirms that the receipt matches the recorded runs, and tells you if the code has changed since the receipt was printed.
