@@ -11,8 +11,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const VERSION = '0.1.0';
-const WIDTH = 48; // receipt width
-const KEY = 9; // width of the label column
+const RECEIPT_WIDTH = 48;
+const LABEL_WIDTH = 9;
 const TAIL_BYTES = 64 * 1024;
 
 const HELP = `receipts ${VERSION}: run your checks and print a receipt of what really happened.
@@ -248,7 +248,7 @@ export function resultOf(checks) {
 }
 
 function buildReceipt(ws, scope) {
-  const s = scope.start?.entry ?? null;
+  const startEntry = scope.start?.entry ?? null;
   const runs = scope.items.filter((l) => l.entry?.type === 'run');
   const notes = scope.items.filter((l) => l.entry?.type === 'unchecked');
   const state = gitState(ws, true);
@@ -276,7 +276,7 @@ function buildReceipt(ws, scope) {
     return { status, cmd: e.cmd, ms: e.ms, details, run: last.hash };
   });
 
-  const began = s?.time ?? runs[0]?.entry.start ?? notes[0]?.entry.time ?? null;
+  const began = startEntry?.time ?? runs[0]?.entry.start ?? notes[0]?.entry.time ?? null;
   const printed = new Date();
   const name = path.basename(ws.root);
   const repo = !ws.git
@@ -284,10 +284,10 @@ function buildReceipt(ws, scope) {
     : state
       ? `${name} (${state.branch})`
       : `${name} (git could not read the files, so change tracking is off)`;
-  const changed = s && state ? changes(ws, s, state) : null;
+  const changed = startEntry && state ? changes(ws, startEntry, state) : null;
   const [result, detail] = resultOf(checks);
   return bodyOf({
-    task: s?.task ?? null,
+    task: startEntry?.task ?? null,
     repo,
     when: began ? span(new Date(began), printed) : stamp(printed),
     changes: changed?.summary ?? null,
@@ -300,37 +300,37 @@ function buildReceipt(ws, scope) {
   });
 }
 
-export function render(b, id) {
-  const checks = b.checks || [];
-  const notes = b.notes || [];
+export function render(body, id) {
+  const checks = body.checks || [];
+  const notes = body.notes || [];
   const out = [];
-  const rule = (c) => out.push(c.repeat(WIDTH));
-  const field = (key, value) => wrap(value, WIDTH - KEY).forEach((s, i) => out.push((i ? '' : key).padEnd(KEY) + s));
+  const rule = (c) => out.push(c.repeat(RECEIPT_WIDTH));
+  const field = (key, value) => wrap(value, RECEIPT_WIDTH - LABEL_WIDTH).forEach((s, i) => out.push((i ? '' : key).padEnd(LABEL_WIDTH) + s));
   rule('=');
-  out.push(' '.repeat((WIDTH - 7) >> 1) + 'RECEIPT');
+  out.push(' '.repeat((RECEIPT_WIDTH - 7) >> 1) + 'RECEIPT');
   rule('=');
-  field('task', b.task ?? 'not recorded (no start)');
-  field('repo', b.repo);
-  field('when', b.when);
-  if (b.changes) field('changes', b.changes);
-  if (b.tests) field('tests', b.tests);
+  field('task', body.task ?? 'not recorded (no start)');
+  field('repo', body.repo);
+  field('when', body.when);
+  if (body.changes) field('changes', body.changes);
+  if (body.tests) field('tests', body.tests);
   rule('-');
   if (!checks.length) out.push('No checks were run.');
   for (const c of checks) {
     const time = duration(c.ms);
-    wrap(commandLine(c.cmd), WIDTH - 6, WIDTH - 7 - time.length).forEach((s, i) =>
-      out.push(i ? `      ${s}` : `${c.status.padEnd(6)}${s}`.padEnd(WIDTH - time.length) + time),
+    wrap(commandLine(c.cmd), RECEIPT_WIDTH - 6, RECEIPT_WIDTH - 7 - time.length).forEach((s, i) =>
+      out.push(i ? `      ${s}` : `${c.status.padEnd(6)}${s}`.padEnd(RECEIPT_WIDTH - time.length) + time),
     );
-    for (const d of c.details) wrap(d, WIDTH - 6).forEach((s) => out.push(`      ${s}`));
+    for (const d of c.details) wrap(d, RECEIPT_WIDTH - 6).forEach((s) => out.push(`      ${s}`));
   }
   if (notes.length) {
     rule('-');
     out.push('NOT CHECKED');
-    for (const n of notes) wrap(n.text, WIDTH - 4).forEach((s, i) => out.push(`${i ? '    ' : '  - '}${s}`));
+    for (const n of notes) wrap(n.text, RECEIPT_WIDTH - 4).forEach((s, i) => out.push(`${i ? '    ' : '  - '}${s}`));
   }
   rule('-');
-  field('RESULT', b.result);
-  field('', b.detail);
+  field('RESULT', body.result);
+  field('', body.detail);
   field('receipt', id);
   rule('=');
   return out.join('\n');
@@ -449,8 +449,8 @@ function hashFiles(root, names) {
 
 // What the task changed: the commit it started on against the files now,
 // plus files that are new since the start.
-function changes(ws, s, state) {
-  const base = s.head ?? git(['hash-object', '-t', 'tree', '--stdin'], ws.root, '').out.trim();
+function changes(ws, startEntry, state) {
+  const base = startEntry.head ?? git(['hash-object', '-t', 'tree', '--stdin'], ws.root, '').out.trim();
   if (!base) return null;
   const flags = ['--no-renames', '--no-ext-diff', '--no-textconv', '-z'];
   const num = git(['diff', '--numstat', ...flags, base, '--'], ws.root);
@@ -469,7 +469,7 @@ function changes(ws, s, state) {
   const touched = [];
   const recs = names.out.split('\0');
   for (let i = 0; i + 1 < recs.length; i += 2) if (recs[i]) touched.push([recs[i][0], recs[i + 1]]);
-  const already = new Set(s.untracked || []);
+  const already = new Set(startEntry.untracked || []);
   for (const p of state.untracked) {
     if (already.has(p)) continue;
     files++;
@@ -481,7 +481,7 @@ function changes(ws, s, state) {
   const shown = tests.slice(0, 3).map(([k, p]) => `${p} (${word[k] || 'edited'})`);
   if (tests.length > 3) shown.push(`${tests.length - 3} more`);
   return {
-    summary: files ? `${count(files, 'file')}, +${add} -${del}${s.head ? ` since ${s.head.slice(0, 7)}` : ''}` : 'no files changed',
+    summary: files ? `${count(files, 'file')}, +${add} -${del}${startEntry.head ? ` since ${startEntry.head.slice(0, 7)}` : ''}` : 'no files changed',
     tests: shown.length ? shown.join(', ') : null,
   };
 }
@@ -620,34 +620,34 @@ export class Summary {
   }
 
   line(text) {
-    const l = text.trim();
-    if (!l) return;
-    if (!WRAPPER_NOISE.test(l)) this.last = l;
+    const line = text.trim();
+    if (!line) return;
+    if (!WRAPPER_NOISE.test(line)) this.last = line;
     let m;
-    if ((m = /^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/.exec(l))) {
+    if ((m = /^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/.exec(line))) {
       this.cargo ??= [0, 0, 0];
       for (let i = 0; i < 3; i++) this.cargo[i] += Number(m[i + 1]);
-    } else if (/^ok\s+\S+\s+(?:\(cached\)|[\d.]+s)/.test(l)) this.go.ok++;
-    else if (/^FAIL\s+\S+\s+(?:[\d.]+s|\[[^\]]+\])/.test(l)) this.go.fail++;
-    else if (/^--- FAIL: /.test(l)) this.go.tests++;
-    else if ((m = /^(?:#|ℹ)\s*(tests|pass|fail|skipped|todo|cancelled)\s+(\d+)$/.exec(l))) this.tap[m[1]] = Number(m[2]);
-    else if ((m = /^(\d+) (pass|fail|skip|todo)$/.exec(l))) this.bun[m[2]] = Number(m[1]);
-    else if ((m = /^(\d+) (passing|failing|pending)(?: \([^)]*\))?$/.exec(l))) this.mocha[m[2]] = Number(m[1]);
-    else if ((m = /^Ran (\d+) tests? in \S+$/.exec(l))) this.unittest = { ran: Number(m[1]), end: '' };
-    else if (this.unittest && /^(?:OK|FAILED)(?: \(.*\))?$/.test(l)) this.unittest.end = l;
-    else if ((m = /^Tests:\s+(.*\d.*)$/.exec(l))) this.known = m[1]; // jest
-    else if ((m = /^Tests\s+(\d.*)$/.exec(l))) this.known = m[1].replace(/\s+\|\s+/g, ', '); // vitest
-    else if ((m = /^=+ (.*\d.*?) in [\d.]+s(?: \([^)]*\))? =+$/.exec(l))) this.known = m[1]; // pytest
-    else if ((m = /^(\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|warnings?|deselected)(?:, \d+ \w+)*) in [\d.]+s/.exec(l)))
+    } else if (/^ok\s+\S+\s+(?:\(cached\)|[\d.]+s)/.test(line)) this.go.ok++;
+    else if (/^FAIL\s+\S+\s+(?:[\d.]+s|\[[^\]]+\])/.test(line)) this.go.fail++;
+    else if (/^--- FAIL: /.test(line)) this.go.tests++;
+    else if ((m = /^(?:#|ℹ)\s*(tests|pass|fail|skipped|todo|cancelled)\s+(\d+)$/.exec(line))) this.tap[m[1]] = Number(m[2]);
+    else if ((m = /^(\d+) (pass|fail|skip|todo)$/.exec(line))) this.bun[m[2]] = Number(m[1]);
+    else if ((m = /^(\d+) (passing|failing|pending)(?: \([^)]*\))?$/.exec(line))) this.mocha[m[2]] = Number(m[1]);
+    else if ((m = /^Ran (\d+) tests? in \S+$/.exec(line))) this.unittest = { ran: Number(m[1]), end: '' };
+    else if (this.unittest && /^(?:OK|FAILED)(?: \(.*\))?$/.test(line)) this.unittest.end = line;
+    else if ((m = /^Tests:\s+(.*\d.*)$/.exec(line))) this.known = m[1]; // jest
+    else if ((m = /^Tests\s+(\d.*)$/.exec(line))) this.known = m[1].replace(/\s+\|\s+/g, ', '); // vitest
+    else if ((m = /^=+ (.*\d.*?) in [\d.]+s(?: \([^)]*\))? =+$/.exec(line))) this.known = m[1]; // pytest
+    else if ((m = /^(\d+ (?:passed|failed|errors?|skipped|xfailed|xpassed|warnings?|deselected)(?:, \d+ \w+)*) in [\d.]+s/.exec(line)))
       this.known = m[1]; // pytest -q
-    else if ((m = /^(?:ok|FAILED) \| (\d+) passed(?: \(\d+ steps?\))? \| (\d+) failed/.exec(l)))
+    else if ((m = /^(?:ok|FAILED) \| (\d+) passed(?: \(\d+ steps?\))? \| (\d+) failed/.exec(line)))
       this.known = `${m[1]} passed, ${m[2]} failed`; // deno
-    else if ((m = /^(?:Passed|Failed)!\s+-\s+Failed:\s+(\d+), Passed:\s+(\d+), Skipped:\s+(\d+)/.exec(l)))
+    else if ((m = /^(?:Passed|Failed)!\s+-\s+Failed:\s+(\d+), Passed:\s+(\d+), Skipped:\s+(\d+)/.exec(line)))
       this.known = counts([[m[2], 'passed'], [m[1], 'failed'], [m[3], 'skipped', true]]); // dotnet
-    else if ((m = /^(?:\[\w+\]\s+)?Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)$/.exec(l)))
+    else if ((m = /^(?:\[\w+\]\s+)?Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)$/.exec(line)))
       this.known = `${m[1]} run, ${count(Number(m[2]), 'failure')}, ${count(Number(m[3]), 'error')}`; // maven
-    else if (l.length <= 100 && /\b\d+ (?:passed|passing|failed|failing|failures?|errors?|tests?|examples?|problems?|specs?)\b/i.test(l))
-      this.generic = l;
+    else if (line.length <= 100 && /\b\d+ (?:passed|passing|failed|failing|failures?|errors?|tests?|examples?|problems?|specs?)\b/i.test(line))
+      this.generic = line;
   }
 
   result(exit) {
