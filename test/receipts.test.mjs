@@ -219,8 +219,10 @@ test('long commands are shown in full', () => {
   const long = `${ok} && ${NODE} -e "console.log('a second command that is long enough to wrap')"`;
   cli(dir, 'run', long);
   const { text } = receipt(dir);
+  // Put the wrapped command back together, without its time at the end.
   const squash = (s) => s.replace(/\s+/g, '');
-  const shown = squash(text.split('\n').filter((l) => /^(PASS {2}| {6})/.test(l)).map((l) => l.slice(6).replace(/\s+\S+s$/, '')).join(''));
+  const commandLines = text.split('\n').filter((l) => /^(PASS {2}| {6})/.test(l));
+  const shown = squash(commandLines.map((l) => l.slice(6).replace(/\s+\S+s$/, '')).join(''));
   assert.ok(shown.includes(squash(long)), shown);
   for (const l of text.split('\n').filter((l) => !l.startsWith('Check it:'))) assert.ok(l.length <= 48, `too wide: ${l}`);
 });

@@ -14,6 +14,7 @@ export const VERSION = '0.1.0';
 const RECEIPT_WIDTH = 48;
 const LABEL_WIDTH = 9;
 const TAIL_BYTES = 64 * 1024;
+const MAX_UNTRACKED = 1000;
 
 const HELP = `receipts ${VERSION}: run your checks and print a receipt of what really happened.
 
@@ -55,7 +56,7 @@ function start(args) {
     time: new Date().toISOString(),
     task,
     head: state?.head ?? null,
-    untracked: state ? state.untracked.slice(0, 1000) : [],
+    untracked: state ? state.untracked.slice(0, MAX_UNTRACKED) : [],
   });
   note(`started a receipt for "${task}"`);
   return 0;
@@ -266,8 +267,12 @@ function buildReceipt(ws, scope) {
     const e = last.entry;
     const status = statusOf(e, tree);
     const details = [];
-    if (status === 'FAIL') details.push([e.signal ? `stopped by ${e.signal}` : `exit ${e.exit}`, e.summary].filter(Boolean).join(': '));
-    else if (e.summary) details.push(e.summary);
+    if (status === 'FAIL') {
+      const how = e.signal ? `stopped by ${e.signal}` : `exit ${e.exit}`;
+      details.push(e.summary ? `${how}: ${e.summary}` : how);
+    } else if (e.summary) {
+      details.push(e.summary);
+    }
     if (status === 'STALE') details.push(e.after ? 'ran before the last code change' : 'the code could not be read when it ran');
     if (e.before && e.after && e.before !== e.after) details.push('it changed files while it ran');
     if (e.dir) details.push(`in ${e.dir}`);
@@ -305,7 +310,12 @@ export function render(body, id) {
   const notes = body.notes || [];
   const out = [];
   const rule = (c) => out.push(c.repeat(RECEIPT_WIDTH));
-  const field = (key, value) => wrap(value, RECEIPT_WIDTH - LABEL_WIDTH).forEach((s, i) => out.push((i ? '' : key).padEnd(LABEL_WIDTH) + s));
+  // A label on the first line, then the value wrapped under it.
+  const field = (key, value) => {
+    wrap(value, RECEIPT_WIDTH - LABEL_WIDTH).forEach((s, i) => {
+      out.push((i ? '' : key).padEnd(LABEL_WIDTH) + s);
+    });
+  };
   rule('=');
   out.push(' '.repeat((RECEIPT_WIDTH - 7) >> 1) + 'RECEIPT');
   rule('=');
@@ -450,6 +460,7 @@ function hashFiles(root, names) {
 // What the task changed: the commit it started on against the files now,
 // plus files that are new since the start.
 function changes(ws, startEntry, state) {
+  // A repo with no commits yet is compared with git's empty tree.
   const base = startEntry.head ?? git(['hash-object', '-t', 'tree', '--stdin'], ws.root, '').out.trim();
   if (!base) return null;
   const flags = ['--no-renames', '--no-ext-diff', '--no-textconv', '-z'];
@@ -480,10 +491,12 @@ function changes(ws, startEntry, state) {
   const word = { A: 'added', D: 'deleted' };
   const shown = tests.slice(0, 3).map(([k, p]) => `${p} (${word[k] || 'edited'})`);
   if (tests.length > 3) shown.push(`${tests.length - 3} more`);
-  return {
-    summary: files ? `${count(files, 'file')}, +${add} -${del}${startEntry.head ? ` since ${startEntry.head.slice(0, 7)}` : ''}` : 'no files changed',
-    tests: shown.length ? shown.join(', ') : null,
-  };
+  let summary = 'no files changed';
+  if (files) {
+    summary = `${count(files, 'file')}, +${add} -${del}`;
+    if (startEntry.head) summary += ` since ${startEntry.head.slice(0, 7)}`;
+  }
+  return { summary, tests: shown.length ? shown.join(', ') : null };
 }
 
 function lineCount(file) {
@@ -593,6 +606,7 @@ function locked(ws, fn) {
         if (Date.now() - fs.statSync(lock).mtimeMs > 10000) fs.rmSync(lock, { recursive: true, force: true });
       } catch {}
       if (Date.now() > deadline) throw new Error(`the log is locked. If no other receipts command is running, delete ${lock}`);
+      // Sleep 25 ms. Everything here is synchronous, so there's no await.
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
   }
@@ -653,11 +667,34 @@ export class Summary {
   result(exit) {
     const { cargo, go, tap, bun, mocha, unittest } = this;
     if (cargo) return counts([[cargo[0], 'passed'], [cargo[1], 'failed'], [cargo[2], 'ignored', true]]);
-    if (go.ok || go.fail) return `${count(go.ok, 'package')} ok, ${go.fail} failed${go.tests ? ` (${count(go.tests, 'test')})` : ''}`;
-    if ('pass' in tap && 'fail' in tap)
-      return counts([[tap.pass, 'passed'], [tap.fail, 'failed'], [tap.skipped, 'skipped', true], [tap.todo, 'todo', true], [tap.cancelled, 'cancelled', true]]);
-    if ('pass' in bun || 'fail' in bun) return counts([[bun.pass ?? 0, 'passed'], [bun.fail ?? 0, 'failed'], [bun.skip, 'skipped', true], [bun.todo, 'todo', true]]);
-    if ('passing' in mocha || 'failing' in mocha) return counts([[mocha.passing ?? 0, 'passed'], [mocha.failing ?? 0, 'failed'], [mocha.pending, 'pending', true]]);
+    if (go.ok || go.fail) {
+      const tests = go.tests ? ` (${count(go.tests, 'test')})` : '';
+      return `${count(go.ok, 'package')} ok, ${go.fail} failed${tests}`;
+    }
+    if ('pass' in tap && 'fail' in tap) {
+      return counts([
+        [tap.pass, 'passed'],
+        [tap.fail, 'failed'],
+        [tap.skipped, 'skipped', true],
+        [tap.todo, 'todo', true],
+        [tap.cancelled, 'cancelled', true],
+      ]);
+    }
+    if ('pass' in bun || 'fail' in bun) {
+      return counts([
+        [bun.pass ?? 0, 'passed'],
+        [bun.fail ?? 0, 'failed'],
+        [bun.skip, 'skipped', true],
+        [bun.todo, 'todo', true],
+      ]);
+    }
+    if ('passing' in mocha || 'failing' in mocha) {
+      return counts([
+        [mocha.passing ?? 0, 'passed'],
+        [mocha.failing ?? 0, 'failed'],
+        [mocha.pending, 'pending', true],
+      ]);
+    }
     if (unittest?.end) return `${count(unittest.ran, 'test')}, ${unittest.end}`;
     return this.known || this.generic || (exit === 0 ? '' : this.last);
   }
